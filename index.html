@@ -1,0 +1,439 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quantum Cascade: Fractal Dimension Navigator</title>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.8.0/lib/p5.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            max-width: 300px;
+            z-index: 100;
+        }
+        #toggle-controls {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 100;
+        }
+        label {
+            display: block;
+            margin-top: 8px;
+        }
+        input, select {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+        }
+        .slider-value {
+            margin-left: 10px;
+            min-width: 30px;
+            text-align: right;
+        }
+    </style>
+
+<base target="_self">
+
+
+    </head><body><div id="controls">
+        <h3>Fractal Controls</h3>
+        <label>Fractal Type</label>
+        <select id="fractal-type">
+            <option value="mandelbrot">Mandelbrot</option>
+            <option value="julia">Julia</option>
+            <option value="burningShip">Burning Ship</option>
+        </select>
+
+        <label>Color Palette</label>
+        <select id="color-palette">
+            <option value="cosmic">Cosmic</option>
+            <option value="ocean">Ocean</option>
+            <option value="fire">Fire</option>
+            <option value="forest">Forest</option>
+        </select>
+
+        <label>Iterations: <span id="iterations-value">50</span></label>
+        <input type="range" id="iterations" min="10" max="100" value="50">
+
+        <label>Zoom: <span id="zoom-value">1.0</span></label>
+        <input type="range" id="zoom" min="0.1" max="5" step="0.1" value="1.0">
+
+        <label>Audio Reactivity</label>
+        <select id="audio-reactivity">
+            <option value="off">Off</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+        </select>
+
+        <label>Particle Count: <span id="particles-value">500</span></label>
+        <input type="range" id="particles" min="100" max="2000" value="500">
+    </div>
+
+    <button id="toggle-controls">Hide Controls</button>
+
+    <script>
+        const sketch = (p) => {
+            let audioContext;
+            let analyser;
+            let microphone;
+            let audioData;
+            let isAudioSetup = false;
+            let particles = [];
+            let maxParticles = 500;
+            let fractalType = 'mandelbrot';
+            let colorPalette = 'cosmic';
+            let iterations = 50;
+            let zoomLevel = 1.0;
+            let audioReactivity = 'off';
+            let controlsVisible = true;
+            let lastFrameTime = 0;
+            let frameRateMonitor = 0;
+            let qualityLevel = 1;
+
+            p.preload = () => {
+                // Any assets to preload would go here
+            };
+
+            p.setup = () => {
+                const canvas = p.createCanvas(p.windowWidth, p.windowHeight, p.WEBGL);
+                canvas.mousePressed(startAudio);
+                p.colorMode(p.HSB, 360, 100, 100, 1);
+                p.noStroke();
+
+                // Initialize particles
+                maxParticles = parseInt(document.getElementById('particles').value);
+                createParticles();
+
+                // Load control panel state from localStorage
+                const savedState = localStorage.getItem('controlsVisible');
+                if (savedState !== null) {
+                    controlsVisible = savedState === 'true';
+                    document.getElementById('controls').style.display = controlsVisible ? 'block' : 'none';
+                    document.getElementById('toggle-controls').textContent = controlsVisible ? 'Hide Controls' : 'Show Controls';
+                }
+
+                // Set up event listeners for controls
+                document.getElementById('fractal-type').addEventListener('change', (e) => {
+                    fractalType = e.target.value;
+                });
+
+                document.getElementById('color-palette').addEventListener('change', (e) => {
+                    colorPalette = e.target.value;
+                });
+
+                document.getElementById('iterations').addEventListener('input', (e) => {
+                    iterations = parseInt(e.target.value);
+                    document.getElementById('iterations-value').textContent = iterations;
+                });
+
+                document.getElementById('zoom').addEventListener('input', (e) => {
+                    zoomLevel = parseFloat(e.target.value);
+                    document.getElementById('zoom-value').textContent = zoomLevel.toFixed(1);
+                });
+
+                document.getElementById('audio-reactivity').addEventListener('change', (e) => {
+                    audioReactivity = e.target.value;
+                    if (audioReactivity === 'off' && isAudioSetup) {
+                        microphone.disconnect();
+                        isAudioSetup = false;
+                    } else if (audioReactivity !== 'off' && !isAudioSetup) {
+                        startAudio();
+                    }
+                });
+
+                document.getElementById('particles').addEventListener('input', (e) => {
+                    maxParticles = parseInt(e.target.value);
+                    document.getElementById('particles-value').textContent = maxParticles;
+                    createParticles();
+                });
+
+                document.getElementById('toggle-controls').addEventListener('click', () => {
+                    controlsVisible = !controlsVisible;
+                    document.getElementById('controls').style.display = controlsVisible ? 'block' : 'none';
+                    document.getElementById('toggle-controls').textContent = controlsVisible ? 'Hide Controls' : 'Show Controls';
+                    localStorage.setItem('controlsVisible', controlsVisible);
+                });
+            };
+
+            function createParticles() {
+                particles = [];
+                for (let i = 0; i < maxParticles; i++) {
+                    particles.push({
+                        position: p.createVector(p.random(-p.width/2, p.width/2), p.random(-p.height/2, p.height/2)),
+                        velocity: p.createVector(p.random(-1, 1), p.random(-1, 1)),
+                        size: p.random(2, 5),
+                        hue: p.random(360),
+                        life: p.random(100, 200)
+                    });
+                }
+            }
+
+            function startAudio() {
+                if (!isAudioSetup && audioReactivity !== 'off') {
+                    try {
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        analyser = audioContext.createAnalyser();
+                        analyser.fftSize = 256;
+                        
+                        navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+                            .then((stream) => {
+                                microphone = audioContext.createMediaStreamSource(stream);
+                                microphone.connect(analyser);
+                                audioData = new Uint8Array(analyser.frequencyBinCount);
+                                isAudioSetup = true;
+                            })
+                            .catch((err) => {
+                                console.error('Error accessing microphone:', err);
+                                document.getElementById('audio-reactivity').value = 'off';
+                                audioReactivity = 'off';
+                            });
+                    } catch (e) {
+                        console.error('Error initializing audio:', e);
+                        document.getElementById('audio-reactivity').value = 'off';
+                        audioReactivity = 'off';
+                    }
+                }
+            }
+
+            p.draw = () => {
+                // Frame rate monitoring and quality adjustment
+                const now = p.millis();
+                if (lastFrameTime > 0) {
+                    const frameTime = now - lastFrameTime;
+                    frameRateMonitor = frameRateMonitor * 0.9 + frameTime * 0.1;
+                    
+                    if (frameRateMonitor > 20 && qualityLevel > 0.5) { // ~50fps
+                        qualityLevel = p.constrain(qualityLevel - 0.1, 0.5, 1);
+                    } else if (frameRateMonitor < 16 && qualityLevel < 1) { // ~60fps
+                        qualityLevel = p.constrain(qualityLevel + 0.1, 0.5, 1);
+                    }
+                }
+                lastFrameTime = now;
+
+                p.background(0);
+                
+                // Get audio data if available
+                let bassLevel = 0;
+                let midLevel = 0;
+                let trebleLevel = 0;
+                
+                if (isAudioSetup && audioReactivity !== 'off') {
+                    analyser.getByteFrequencyData(audioData);
+                    
+                    // Calculate frequency bands
+                    const bassEnd = Math.floor(audioData.length * 0.1);
+                    const midEnd = Math.floor(audioData.length * 0.5);
+                    
+                    for (let i = 0; i < audioData.length; i++) {
+                        const value = audioData[i] / 255;
+                        if (i < bassEnd) {
+                            bassLevel += value;
+                        } else if (i < midEnd) {
+                            midLevel += value;
+                        } else {
+                            trebleLevel += value;
+                        }
+                    }
+                    
+                    bassLevel /= bassEnd;
+                    midLevel /= (midEnd - bassEnd);
+                    trebleLevel /= (audioData.length - midEnd);
+                }
+
+                // Apply audio reactivity to parameters
+                const audioFactor = audioReactivity === 'off' ? 0 : 
+                                    audioReactivity === 'low' ? 0.3 : 
+                                    audioReactivity === 'medium' ? 0.6 : 1;
+                
+                const dynamicIterations = iterations * (1 + bassLevel * 0.5 * audioFactor);
+                const dynamicZoom = zoomLevel * (1 + midLevel * 0.2 * audioFactor);
+
+                // Draw fractal background
+                drawFractal(dynamicIterations, dynamicZoom, bassLevel, midLevel, trebleLevel, audioFactor);
+
+                // Update and draw particles
+                updateParticles(bassLevel, midLevel, trebleLevel, audioFactor);
+            };
+
+            function drawFractal(iterations, zoom, bass, mid, treble, audioFactor) {
+                p.push();
+                p.translate(-p.width/2, -p.height/2);
+                
+                const w = p.width;
+                const h = p.height;
+                const zoomFactor = 1 / zoom;
+                const centerX = w/2;
+                const centerY = h/2;
+                
+                // Limit resolution for performance
+                const step = p.max(1, Math.floor(3 / qualityLevel));
+                
+                for (let x = 0; x < w; x += step) {
+                    for (let y = 0; y < h; y += step) {
+                        let zx, zy, cX, cY;
+                        const xx = (x - centerX) * 0.01 * zoomFactor;
+                        const yy = (y - centerY) * 0.01 * zoomFactor;
+                        
+                        if (fractalType === 'mandelbrot') {
+                            zx = zy = 0;
+                            cX = xx;
+                            cY = yy;
+                        } else if (fractalType === 'julia') {
+                            zx = xx;
+                            zy = yy;
+                            cX = p.map(p.mouseX, 0, p.width, -1, 1) + bass * 0.2 * audioFactor;
+                            cY = p.map(p.mouseY, 0, p.height, -1, 1) + mid * 0.2 * audioFactor;
+                        } else { // burning ship
+                            zx = zy = 0;
+                            cX = xx;
+                            cY = yy;
+                        }
+                        
+                        let i;
+                        for (i = 0; i < iterations; i++) {
+                            let tmp;
+                            if (fractalType === 'burningShip') {
+                                zx = p.abs(zx);
+                                zy = p.abs(zy);
+                            }
+                            
+                            tmp = zx * zx - zy * zy + cX;
+                            zy = 2 * zx * zy + cY;
+                            zx = tmp;
+                            
+                            if (zx * zx + zy * zy > 4) break;
+                        }
+                        
+                        if (i < iterations) {
+                            let hue, sat, bri;
+                            const norm = i / iterations;
+                            
+                            if (colorPalette === 'cosmic') {
+                                hue = (norm * 360 + bass * 100 * audioFactor) % 360;
+                                sat = 80 + mid * 20 * audioFactor;
+                                bri = 50 + treble * 40 * audioFactor;
+                            } else if (colorPalette === 'ocean') {
+                                hue = 200 + norm * 100 + bass * 50 * audioFactor;
+                                sat = 70 + mid * 20 * audioFactor;
+                                bri = 40 + norm * 40 + treble * 30 * audioFactor;
+                            } else if (colorPalette === 'fire') {
+                                hue = 20 + norm * 40 + bass * 30 * audioFactor;
+                                sat = 90 + mid * 10 * audioFactor;
+                                bri = 50 + norm * 40 + treble * 30 * audioFactor;
+                            } else { // forest
+                                hue = 100 + norm * 60 + bass * 30 * audioFactor;
+                                sat = 70 + mid * 20 * audioFactor;
+                                bri = 30 + norm * 50 + treble * 20 * audioFactor;
+                            }
+                            
+                            p.fill(hue % 360, p.constrain(sat, 0, 100), p.constrain(bri, 0, 100));
+                            p.rect(x, y, step, step);
+                        }
+                    }
+                }
+                p.pop();
+            }
+
+            function updateParticles(bass, mid, treble, audioFactor) {
+                const center = p.createVector(0, 0);
+                const mouse = p.createVector(p.mouseX - p.width/2, p.mouseY - p.height/2);
+                
+                for (let i = 0; i < particles.length; i++) {
+                    const pcl = particles[i];
+                    
+                    // Apply forces
+                    const toCenter = p5.Vector.sub(center, pcl.position);
+                    toCenter.mult(0.001);
+                    
+                    const toMouse = p5.Vector.sub(mouse, pcl.position);
+                    toMouse.mult(0.0001 * (1 + bass * 0.5 * audioFactor));
+                    
+                    const noiseForce = p.createVector(
+                        p.noise(pcl.position.x * 0.01, pcl.position.y * 0.01, p.frameCount * 0.01) - 0.5,
+                        p.noise(pcl.position.y * 0.01, p.frameCount * 0.01, pcl.position.x * 0.01) - 0.5
+                    );
+                    noiseForce.mult(0.1 * (1 + mid * 0.3 * audioFactor));
+                    
+                    pcl.velocity.add(toCenter);
+                    pcl.velocity.add(toMouse);
+                    pcl.velocity.add(noiseForce);
+                    pcl.velocity.limit(2 * (1 + treble * 0.2 * audioFactor));
+                    
+                    // Update position
+                    pcl.position.add(pcl.velocity);
+                    pcl.life--;
+                    
+                    // Reset particles that go off screen or die
+                    if (pcl.life <= 0 || 
+                        pcl.position.x < -p.width/2 || pcl.position.x > p.width/2 || 
+                        pcl.position.y < -p.height/2 || pcl.position.y > p.height/2) {
+                        resetParticle(pcl, i);
+                    }
+                    
+                    // Draw particle
+                    let hue;
+                    if (colorPalette === 'cosmic') {
+                        hue = (pcl.hue + p.frameCount * 0.5 + bass * 10 * audioFactor) % 360;
+                    } else if (colorPalette === 'ocean') {
+                        hue = (200 + pcl.hue * 0.2 + mid * 5 * audioFactor) % 360;
+                    } else if (colorPalette === 'fire') {
+                        hue = (20 + pcl.hue * 0.3 + bass * 8 * audioFactor) % 360;
+                    } else { // forest
+                        hue = (100 + pcl.hue * 0.2 + treble * 5 * audioFactor) % 360;
+                    }
+                    
+                    p.push();
+                    p.translate(pcl.position.x, pcl.position.y);
+                    p.fill(hue, 80, 90, 0.8);
+                    p.circle(0, 0, pcl.size * (1 + bass * 0.5 * audioFactor));
+                    p.pop();
+                }
+            }
+
+            function resetParticle(pcl, index) {
+                pcl.position.set(p.random(-p.width/2, p.width/2), p.random(-p.height/2, p.height/2));
+                pcl.velocity.set(p.random(-1, 1), p.random(-1, 1));
+                pcl.size = p.random(2, 5);
+                pcl.hue = p.random(360);
+                pcl.life = p.random(100, 200);
+            }
+
+            p.windowResized = () => {
+                p.resizeCanvas(p.windowWidth, p.windowHeight);
+            };
+
+            p.mouseMoved = () => {
+                // Additional interactivity can be added here
+            };
+        };
+
+        new p5(sketch);
+    </script>
+
+              
+          
+                
+          
+              
+</body></html>
